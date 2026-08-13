@@ -1,0 +1,44 @@
+# Secrets - never commit
+.env
+.env.local
+
+# Runtime state: intent log, order audit, historical bars, kill switch
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Backtest artefacts
+*.pkl
+*.parquet
+notebooks/output/
+reports/
+
+# Logs and OS
+*.log
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+
+# Third-party documentation kept locally for reference only. These belong to their
+# upstream projects (Agno, OpenAlgo, vectorbt) and are not redistributed from this
+# repository.
+docs/reference/agno/
+docs/reference/openalgo-api/
+docs/reference/openalgo-prompt/
+
+# Claude Code session state
+.claude/
