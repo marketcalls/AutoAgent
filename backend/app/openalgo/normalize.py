@@ -43,6 +43,10 @@ from typing import Any
 
 MAX_TOOL_CHARS = 12_000
 
+# Room reserved for the truncation envelope's own keys and note, so the wrapper does
+# not push the result back over the limit it exists to enforce.
+_TRUNCATION_OVERHEAD = 400
+
 
 def _clean(obj: Any) -> Any:
     """Recursively replace NaN/Infinity with None so json.dumps produces valid JSON."""
@@ -68,15 +72,26 @@ def to_json(payload: Any, limit: int = MAX_TOOL_CHARS) -> str:
         # Cutting mid-string would hand the model malformed JSON, so the overflow is
         # reported as a well-formed object instead. A caller hitting this is a design
         # problem in that caller: shape the payload down before it gets here.
-        dropped = len(text) - limit
-        return json.dumps({
-            "ok": True,
-            "truncated": True,
-            "dropped_chars": dropped,
-            "note": f"Result exceeded {limit} characters and was cut. Narrow the "
-                    "request (filter, or ask for fewer items) to see all of it.",
-            "partial_text": text[:limit],
-        }, ensure_ascii=False)
+        #
+        # The slice is sized so the WHOLE returned string honours the limit, not just
+        # the payload inside it. TradingAgent kept text[:limit] and then wrapped it,
+        # which returned about 12,320 characters against a 12,000 cap - a cap that is
+        # exceeded is not a cap. Escaping means the serialized length of partial_text
+        # is not its raw length, so the fit is converged on rather than computed.
+        keep = max(0, limit - _TRUNCATION_OVERHEAD)
+        for _ in range(4):
+            out = json.dumps({
+                "ok": True,
+                "truncated": True,
+                "dropped_chars": len(text) - keep,
+                "note": f"Result exceeded {limit} characters and was cut. Narrow the "
+                        "request (filter, or ask for fewer items) to see all of it.",
+                "partial_text": text[:keep],
+            }, ensure_ascii=False)
+            if len(out) <= limit or keep == 0:
+                return out
+            keep = max(0, keep - (len(out) - limit))
+        return out
     return text
 
 
