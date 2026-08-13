@@ -53,7 +53,7 @@ export function ConnectionBanner({
             ? message || "Start the backend, or check that it is bound to 127.0.0.1:8090."
             : streamError || "Reconnecting."}
           {offline
-            ? " Anything already running keeps running: this page is an observer, and losing it does not stop the agent."
+            ? ". Anything already running keeps running: this page is an observer, and losing it does not stop the agent."
             : null}
         </div>
       </div>

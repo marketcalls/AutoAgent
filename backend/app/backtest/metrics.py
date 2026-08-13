@@ -87,7 +87,23 @@ class Metrics:
         return self.is_significant and self.expectancy_r > 0 and self.net_pnl > 0
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        """Serialize INCLUDING the derived flags.
+
+        `asdict()` walks dataclass FIELDS, so `is_viable` and `is_significant` -
+        both properties - are silently dropped. Anything reading this over the
+        wire then has to re-derive the viability rule, which is how two copies of
+        a rule start disagreeing.
+
+        Found twice: the frontend hit it here and had to fall back to the
+        selector's own viable list, and the planner hit the identical thing with
+        RegimeRead.label. Same lesson both times: a property is invisible to
+        asdict().
+        """
+        return {
+            **asdict(self),
+            "is_viable": self.is_viable,
+            "is_significant": self.is_significant,
+        }
 
 
 def _max_drawdown(equity: Sequence[float]) -> float:

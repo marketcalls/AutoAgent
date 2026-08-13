@@ -30,6 +30,7 @@ import {
   EMPTY,
   formatCurrency,
   formatDate,
+  formatDateTime,
   formatFractionAsPercent,
   formatNumber,
   formatPercent,
@@ -237,7 +238,7 @@ export function MandateCard({ plan, config, deciding, error, onDecide }: Mandate
               {plan.status === "approved" ? "Mandate approved" : "Mandate rejected"}
             </span>
             {plan.approvedAt ? (
-              <span className="text-muted-foreground">at {formatDate(plan.approvedAt)}</span>
+              <span className="text-muted-foreground">at {formatDateTime(plan.approvedAt)}</span>
             ) : null}
             {plan.note ? <span className="text-muted-foreground">- {plan.note}</span> : null}
           </div>

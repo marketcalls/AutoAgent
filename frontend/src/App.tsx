@@ -19,14 +19,14 @@
  *   old positions is the failure this is guarding against.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { CircleAlert, Info, TriangleAlert } from "lucide-react"
 
 import { ConnectionBanner } from "@/components/ConnectionBanner"
-import { EquityCurve } from "@/components/EquityCurve"
 import { HaltButton } from "@/components/HaltButton"
 import { LiveBoard } from "@/components/LiveBoard"
 import { MandateCard } from "@/components/MandateCard"
+import { SectionBoundary } from "@/components/SectionBoundary"
 import { ThemeToggle } from "@/components/ThemeToggle"
 import { TradeTable } from "@/components/TradeTable"
 import { Badge } from "@/components/ui/badge"
@@ -53,6 +53,13 @@ import {
   type SessionState,
   type TradeRow
 } from "@/lib/api"
+
+/** Recharts and its d3 dependencies are most of the bundle, and the curve is a
+ *  post-session view. Splitting it out keeps the 08:45 path - the mandate gate,
+ *  which is the one screen a human is guaranteed to read - small. */
+const EquityCurve = lazy(() =>
+  import("@/components/EquityCurve").then((module) => ({ default: module.EquityCurve }))
+)
 
 /** Background refresh cadence. The fast one is only used while the stream is down. */
 const POLL_IDLE_MS = 30_000
@@ -123,8 +130,13 @@ export default function App() {
 
     const jobs: Promise<unknown>[] = [
       getPlan(configRef.current)
-        .then((value) => setPlan(value))
+        .then((value) => {
+          setPlan(value)
+          reachable = true
+        })
         .catch((error) => {
+          // A route that answered with an error still proves the backend is up. Only
+          // a status 0 - the connection never landing - means offline.
           if (!isOffline(error)) reachable = true
         }),
       getTrades()
@@ -341,17 +353,21 @@ export default function App() {
         ) : null}
 
         {live && session ? (
-          <LiveBoard session={session} config={config} streamConnected={stream.connected} />
+          <SectionBoundary name="live board">
+            <LiveBoard session={session} config={config} streamConnected={stream.connected} />
+          </SectionBoundary>
         ) : null}
 
         {plan ? (
-          <MandateCard
-            plan={plan}
-            config={config}
-            deciding={deciding}
-            error={decideError}
-            onDecide={(approved, note) => void onDecide(approved, note)}
-          />
+          <SectionBoundary name="mandate">
+            <MandateCard
+              plan={plan}
+              config={config}
+              deciding={deciding}
+              error={decideError}
+              onDecide={(approved, note) => void onDecide(approved, note)}
+            />
+          </SectionBoundary>
         ) : (
           <Card>
             <CardHeader>
@@ -366,14 +382,26 @@ export default function App() {
         )}
 
         {!live && session ? (
-          <LiveBoard session={session} config={config} streamConnected={stream.connected} />
+          <SectionBoundary name="live board">
+            <LiveBoard session={session} config={config} streamConnected={stream.connected} />
+          </SectionBoundary>
         ) : null}
 
         {showReview ? (
-          <>
-            <EquityCurve points={equity} fromServer={equityFromServer} />
-            <TradeTable trades={trades} />
-          </>
+          <SectionBoundary name="session review">
+            <Suspense
+              fallback={
+                <div className="rounded-lg border border-border bg-panel px-5 py-8 text-center">
+                  <span className="shimmer text-sm">Loading the equity curve</span>
+                </div>
+              }
+            >
+              <EquityCurve points={equity} fromServer={equityFromServer} />
+            </Suspense>
+            <div className="mt-6">
+              <TradeTable trades={trades} />
+            </div>
+          </SectionBoundary>
         ) : null}
 
         <footer className="pb-8 text-xs text-muted-foreground">
