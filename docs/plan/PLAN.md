@@ -694,6 +694,12 @@ The constraint that binds a multi-symbol basket:
 max_concurrent x risk_per_trade  <=  daily_loss_limit
 ```
 
+**Compare it with a tolerance.** Measured at step 1: `4 * 0.005` evaluates to
+`0.020000000000000004` in binary floating point, which is arithmetically *at* a 2%
+limit but numerically above it. Without a tolerance the config would reject a
+perfectly valid `MAX_CONCURRENT_POSITIONS=4` as an arithmetic accident. `1e-9` is
+applied here and to the floor-versus-base check.
+
 On the reference allocation:
 
 | Concurrent | At risk | Against a 2% limit |
@@ -1182,10 +1188,15 @@ SCRATCH_BAND_R=0.1
 
 # Exposure
 MAX_PER_SECTOR=2
-MAX_GROSS_EXPOSURE_PCT=          # OPEN - measure at step 5
-MAX_NET_EXPOSURE_PCT=            # OPEN - measure at step 5
 MARKET_FILTER_SYMBOL=NIFTY
 MARKET_FILTER_EXCHANGE=NSE_INDEX
+# Added to .env.example AND parsed by config.py together at step 5, once the
+# portfolio backtest has produced a number to set them to. Listing a key in only
+# one of the two files is how they drift apart.
+#   MAX_GROSS_EXPOSURE_PCT
+#   MAX_NET_EXPOSURE_PCT
+#   MIN_TURNOVER
+#   ATR_PCT_BAND
 
 # Selection
 LOOKBACK_LONG_SESSIONS=90
@@ -1195,8 +1206,10 @@ REGIME_ADX_FLOOR=                # OPEN - measure at step 5
 
 # Basket - fixed, reviewed weekly, priority order is the tie-break
 BASKET=                          # SYMBOL:SECTOR, five entries, ordered
-MIN_TURNOVER=
-ATR_PCT_BAND=
+
+# A symbol with no sector label is bucketed as UNCLASSIFIED rather than given its
+# own bucket, so MAX_PER_SECTOR still constrains it. Treating an unlabelled name as
+# uncorrelated with everything else is the unsafe reading of a typo.
 
 # Inherited from TradingAgent
 OPENALGO_API_KEY=
