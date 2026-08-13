@@ -1,0 +1,270 @@
+@import "tailwindcss";
+
+/* Tailwind 4 is configured in CSS. There is no tailwind.config.js and no
+   postcss.config.js; the two things that used to live in JS live here:
+
+   - the dark variant. v4 defaults to prefers-color-scheme, but the theme is a class
+     on <html> (set by the anti-FOUC script in index.html), so the variant is
+     redefined to match that.
+   - the theme. Every token below is already a CSS variable that light and dark swap,
+     so @theme only maps them into Tailwind's namespaces: --color-* becomes
+     bg-/text-/border-* utilities, --radius-* becomes rounded-*, --font-* becomes
+     font-*.
+
+   INVARIANT, and it has already cost a bug once in TradingAgent
+   (ThinkingSelector.tsx:11-14): a component that references a token which does not
+   exist renders INVISIBLY - Tailwind emits nothing and there is no error anywhere.
+   Every token any component uses is therefore declared here, in all three places
+   (@theme inline, :root, .dark). That includes the shadcn set (card, popover,
+   secondary, accent, destructive, ring) even where this app barely uses them,
+   because `npx shadcn add` will paste components that assume they exist. */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-panel: var(--panel);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  /* Semantic status. Every one carries -soft (a tinted surface) and -border
+     (a visible edge on that surface) so a status panel never needs a raw colour. */
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-danger-border: var(--danger-border);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-border: var(--success-border);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-border: var(--warn-border);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-border: var(--info-border);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --container-board: 1180px;
+
+  --shadow-l: var(--app-shadow-l);
+}
+
+/* v4 defaults an un-suffixed border to currentColor, which would repaint every
+   `border` in the app. Keep the v3 behaviour of the project's own token. */
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
+}
+
+/* Almost every non-text colour is an alpha overlay off a single base, which is why
+   light and dark stay structurally identical: only the two base colours swap. */
+
+:root,
+:root.light {
+  --radius: 12px;
+
+  --background: oklch(0.994 0 89.876);
+  --foreground: oklch(0.097 0 0);
+  --card: oklch(0.994 0 89.876);
+  --card-foreground: oklch(0.097 0 0);
+  --popover: oklch(0.994 0 89.876);
+  --popover-foreground: oklch(0.097 0 0);
+  --panel: oklch(0.097 0 0 / 0.02);
+  --muted: oklch(0.097 0 0 / 0.04);
+  --muted-foreground: oklch(0.097 0 0 / 0.5);
+  --border: oklch(0.097 0 0 / 0.08);
+  --input: oklch(0.097 0 0 / 0.12);
+  --ring: oklch(0.546 0.215 262.881 / 0.45);
+  --primary: oklch(0.546 0.215 262.881);
+  --primary-foreground: oklch(0.994 0 89.876);
+  --primary-soft: oklch(0.546 0.215 262.881 / 0.1);
+  --secondary: oklch(0.097 0 0 / 0.05);
+  --secondary-foreground: oklch(0.097 0 0);
+  --accent: oklch(0.097 0 0 / 0.05);
+  --accent-foreground: oklch(0.097 0 0);
+  --danger: oklch(0.505 0.19 27.518);
+  --danger-soft: oklch(0.505 0.19 27.518 / 0.08);
+  --danger-border: oklch(0.505 0.19 27.518 / 0.32);
+  --destructive: oklch(0.505 0.19 27.518);
+  --destructive-foreground: oklch(0.994 0 89.876);
+  --success: oklch(0.448 0.108 151.328);
+  --success-soft: oklch(0.448 0.108 151.328 / 0.1);
+  --success-border: oklch(0.448 0.108 151.328 / 0.3);
+  --warn: oklch(0.58 0.13 70);
+  --warn-soft: oklch(0.58 0.13 70 / 0.12);
+  --warn-border: oklch(0.58 0.13 70 / 0.32);
+  --info: oklch(0.5 0.09 240);
+  --info-soft: oklch(0.5 0.09 240 / 0.1);
+  --info-border: oklch(0.5 0.09 240 / 0.3);
+
+  --chart-1: oklch(0.546 0.215 262.881);
+  --chart-2: oklch(0.448 0.108 151.328);
+  --chart-3: oklch(0.58 0.13 70);
+  --chart-4: oklch(0.505 0.19 27.518);
+  --chart-5: oklch(0.5 0.09 240);
+
+  --app-shadow-l: 0 4px 4px -2px oklch(0 0 0 / 0.05), 0 4px 8px -2px oklch(0 0 0 / 0.04);
+}
+
+.dark {
+  --background: oklch(0.205 0 0);
+  --foreground: oklch(0.985 0 89.876);
+  --card: oklch(0.994 0 89.876 / 0.03);
+  --card-foreground: oklch(0.985 0 89.876);
+  --popover: oklch(0.245 0 0);
+  --popover-foreground: oklch(0.985 0 89.876);
+  --panel: oklch(0.994 0 89.876 / 0.02);
+  --muted: oklch(0.994 0 89.876 / 0.05);
+  --muted-foreground: oklch(0.985 0 89.876 / 0.5);
+  --border: oklch(0.994 0 89.876 / 0.08);
+  --input: oklch(0.994 0 89.876 / 0.14);
+  --ring: oklch(0.66 0.17 262.881 / 0.5);
+  --primary: oklch(0.66 0.17 262.881);
+  --primary-foreground: oklch(0.16 0 0);
+  --primary-soft: oklch(0.66 0.17 262.881 / 0.14);
+  --secondary: oklch(0.994 0 89.876 / 0.07);
+  --secondary-foreground: oklch(0.985 0 89.876);
+  --accent: oklch(0.994 0 89.876 / 0.07);
+  --accent-foreground: oklch(0.985 0 89.876);
+  --danger: oklch(0.808 0.103 19.571);
+  --danger-soft: oklch(0.808 0.103 19.571 / 0.12);
+  --danger-border: oklch(0.808 0.103 19.571 / 0.34);
+  --destructive: oklch(0.808 0.103 19.571);
+  --destructive-foreground: oklch(0.16 0 0);
+  --success: oklch(0.871 0.136 154.449);
+  --success-soft: oklch(0.871 0.136 154.449 / 0.12);
+  --success-border: oklch(0.871 0.136 154.449 / 0.3);
+  --warn: oklch(0.85 0.12 82);
+  --warn-soft: oklch(0.85 0.12 82 / 0.12);
+  --warn-border: oklch(0.85 0.12 82 / 0.32);
+  --info: oklch(0.78 0.09 235);
+  --info-soft: oklch(0.78 0.09 235 / 0.12);
+  --info-border: oklch(0.78 0.09 235 / 0.32);
+
+  --chart-1: oklch(0.66 0.17 262.881);
+  --chart-2: oklch(0.871 0.136 154.449);
+  --chart-3: oklch(0.85 0.12 82);
+  --chart-4: oklch(0.808 0.103 19.571);
+  --chart-5: oklch(0.78 0.09 235);
+
+  --app-shadow-l: 0 4px 4px -2px oklch(0 0 0 / 0.1), 0 4px 8px -2px oklch(0 0 0 / 0.08);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Replaces every spinner: the word itself sweeps rather than a rotating glyph.
+   The one exception the design allows is the very first load, and even that uses
+   this, not a spinner. */
+.shimmer {
+  background-image: linear-gradient(90deg, var(--muted-foreground) 0%, var(--foreground) 45%, var(--muted-foreground) 70%),
+    linear-gradient(90deg, var(--muted-foreground), var(--muted-foreground));
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 3s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* The live pulse on the halt control and the session badge. Slow on purpose: a fast
+   blink on a always-visible emergency control reads as an alarm that is already
+   firing, which is the wrong signal when the session is merely running. */
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.pulse-soft {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+
+/* Recharts writes inline SVG focus outlines that fight the token ring. */
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--input);
+  border-radius: 999px;
+}
+
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Tabular figures everywhere a number sits in a column. Proportional digits make a
+   position table jitter as the MTM ticks, which reads as instability in the data. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer,
+  .pulse-soft {
+    animation: none;
+  }
+}

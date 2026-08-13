@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoAgent Control Surface</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Runs before first paint so a dark-theme reload does not flash white. The
+      // theme is a class on <html>, not prefers-color-scheme alone, because the user
+      // can override the system and that choice has to survive a reload.
+      (function () {
+        try {
+          var saved = localStorage.getItem("aa-theme")
+          var dark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches
+          document.documentElement.classList.add(dark ? "dark" : "light")
+        } catch (e) {
+          document.documentElement.classList.add("light")
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

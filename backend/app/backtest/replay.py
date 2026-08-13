@@ -234,7 +234,10 @@ class PortfolioReplay:
                 if budget is not None and budget.state is RunState.HALTED:
                     result.halted_sessions += 1
                 current_session = session
-                budget = RiskBudget(settings=self.settings, trading_date=session)
+                # persist=False: this is a simulation. See the note on RiskBudget.persist -
+                # an earlier version wrote a halt file per simulated session into the
+                # LIVE data directory and stopped the real executor from starting.
+                budget = RiskBudget(settings=self.settings, trading_date=session, persist=False)
                 result.sessions += 1
                 pending.clear()
 

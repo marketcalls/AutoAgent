@@ -115,6 +115,19 @@ class RiskBudget:
     halt_reason: str = ""
     paused_until: datetime | None = None
     open_positions: dict[str, Position] = field(default_factory=dict)
+
+    # Whether a halt is written to disk. TRUE for a live session, where a halt
+    # must survive a restart. FALSE for a backtest.
+    #
+    # MEASURED BUG, step 8: the portfolio replay constructs one RiskBudget per
+    # simulated session using the real Settings, so every backtest session that
+    # hit three consecutive losses wrote a halt file into the LIVE data
+    # directory. 56 of them accumulated, and the live executor then refused to
+    # start with "restored halt from disk: 3 consecutive losses" - halted by a
+    # backtest it ran yesterday. A simulation must never be able to stop the
+    # real thing.
+    persist: bool = True
+
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     # ------------------------------------------------------------------ marks
@@ -320,6 +333,8 @@ class RiskBudget:
         return Path(self.settings.db_path).parent / f"halt-{self.trading_date.isoformat()}.json"
 
     def _persist(self) -> None:
+        if not self.persist:
+            return
         try:
             self._halt_file().write_text(
                 json.dumps(
@@ -345,6 +360,8 @@ class RiskBudget:
 
         Returns True if a halt was restored, meaning the session must not trade.
         """
+        if not self.persist:
+            return False
         path = self._halt_file()
         if not path.exists():
             return False
