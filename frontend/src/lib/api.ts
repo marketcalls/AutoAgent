@@ -197,7 +197,7 @@ function readMode(sources: (Json | null)[]): TradingMode {
 export async function getHealth(): Promise<HealthInfo> {
   const payload = await request<unknown>("/api/health")
   const sources = containers(payload, "health")
-  const openalgo = pick(sources, "openalgo", "openalgo_reachable", "broker_reachable")
+  const openalgo = pick(sources, "openalgo_connected", "openalgo", "openalgo_reachable", "broker_reachable")
   const openalgoRecord = asRecord(openalgo)
   const reachable =
     typeof openalgo === "boolean"
@@ -228,6 +228,10 @@ export interface BasketEntry {
 
 export interface ConfigInfo {
   version: string
+  killSwitch: boolean
+  /** Everything Settings.validate() found wrong. An entry here stops the session. */
+  errors: string[]
+  missingKeys: string[]
   allocation: number | null
   riskFractionBase: number | null
   riskFractionFloor: number | null
@@ -269,11 +273,23 @@ function readBasket(value: unknown): BasketEntry[] {
   return out
 }
 
+/** The settings dump renders the clock as one string - "09:30 - 14:45, squareoff
+ *  15:10" - rather than three fields, so the three times are read back out of it.
+ *  The plan carries them separately and wins wherever both exist. */
+function parseSessionWindow(text: string): { start: string; end: string; squareoff: string } {
+  const times = text.match(/\d{1,2}:\d{2}/g) ?? []
+  return { start: times[0] ?? "", end: times[1] ?? "", squareoff: times[2] ?? "" }
+}
+
 export async function getConfig(): Promise<ConfigInfo> {
   const payload = await request<unknown>("/api/config")
   const sources = containers(payload, "config", "settings")
+  const window = parseSessionWindow(str(pick(sources, "session", "session_window")))
   return {
     version: str(pick(sources, "version")),
+    killSwitch: bool(pick(sources, "kill_switch_engaged", "kill_switch")),
+    errors: strings(pick(sources, "errors", "config_errors")),
+    missingKeys: strings(pick(sources, "missing_keys", "missing")),
     allocation: num(pick(sources, "allocation")),
     riskFractionBase: num(pick(sources, "risk_fraction_base", "risk_fraction")),
     riskFractionFloor: num(pick(sources, "risk_fraction_floor")),
@@ -285,9 +301,9 @@ export async function getConfig(): Promise<ConfigInfo> {
     maxPerSector: num(pick(sources, "max_per_sector")),
     consecutiveLossPause: num(pick(sources, "consecutive_loss_pause")),
     consecutiveLossHalt: num(pick(sources, "consecutive_loss_halt")),
-    startTime: str(pick(sources, "start_time")),
-    endTime: str(pick(sources, "end_time")),
-    squareoffTime: str(pick(sources, "squareoff_time")),
+    startTime: str(pick(sources, "start_time")) || window.start,
+    endTime: str(pick(sources, "end_time")) || window.end,
+    squareoffTime: str(pick(sources, "squareoff_time")) || window.squareoff,
     timeframe: str(pick(sources, "timeframe"), "5m"),
     timezone: str(pick(sources, "timezone"), "Asia/Kolkata"),
     tradingEnabled: bool(pick(sources, "trading_enabled")),
@@ -328,11 +344,18 @@ export interface MetricRow {
 export interface PlanConsequences {
   worstCaseDailyLoss: number | null
   maxCapitalAtRisk: number | null
+  maxCapitalAtRiskPct: number | null
   positionCap: number | null
   riskAmountPerTrade: number | null
   allocation: number | null
   dailyLossLimitPct: number | null
   maxTradesPerDay: number | null
+  /** The EFFECTIVE risk fraction after the mandate band is applied, and what the
+   *  plan asked for before it. A plan proposing 5% must show as the floor it was
+   *  clamped to, never as the 5% it wrote. */
+  riskFraction: number | null
+  riskFractionProposed: number | null
+  riskFractionNote: string
   source: "plan" | "config" | "none"
 }
 
@@ -400,26 +423,30 @@ function readStatus(value: unknown): PlanStatus {
   return "unknown"
 }
 
-function readConsequences(sources: (Json | null)[], config: ConfigInfo | null): PlanConsequences {
-  const planSources = [asRecord(pick(sources, "consequences", "computed", "impact")), ...sources]
+function readConsequences(
+  computed: Json | null,
+  sources: (Json | null)[],
+  config: ConfigInfo | null
+): PlanConsequences {
+  const planSources = [computed, ...sources]
   const worst = num(pick(planSources, "worst_case_daily_loss", "worst_case_loss", "daily_loss_limit_amount"))
   const atRisk = num(pick(planSources, "max_capital_at_risk", "capital_at_risk", "total_at_risk"))
   const cap = num(pick(planSources, "position_cap", "max_concurrent_positions"))
   const perTrade = num(pick(planSources, "risk_amount_per_trade", "risk_amount"))
-  const allocation = num(pick(planSources, "allocation"))
-  const limitPct = num(pick(planSources, "daily_loss_limit_pct"))
-  const maxTrades = num(pick(planSources, "max_trades_per_day"))
 
-  const anyFromPlan = [worst, atRisk, cap, perTrade].some((value) => value !== null)
-  if (anyFromPlan) {
+  if (computed) {
     return {
       worstCaseDailyLoss: worst,
       maxCapitalAtRisk: atRisk,
+      maxCapitalAtRiskPct: num(pick(planSources, "capital_at_risk_pct")),
       positionCap: cap,
       riskAmountPerTrade: perTrade,
-      allocation,
-      dailyLossLimitPct: limitPct,
-      maxTradesPerDay: maxTrades,
+      allocation: num(pick(planSources, "allocation")),
+      dailyLossLimitPct: num(pick(planSources, "daily_loss_limit_pct")),
+      maxTradesPerDay: num(pick(planSources, "max_trades_per_day")),
+      riskFraction: num(pick(planSources, "risk_fraction")),
+      riskFractionProposed: num(pick(planSources, "risk_fraction_proposed")),
+      riskFractionNote: str(pick(planSources, "risk_fraction_note")),
       source: "plan"
     }
   }
@@ -428,41 +455,83 @@ function readConsequences(sources: (Json | null)[], config: ConfigInfo | null): 
   // reading server numbers rather than inventing any, and the card says which.
   if (!config) {
     return {
-      worstCaseDailyLoss: null, maxCapitalAtRisk: null, positionCap: null,
-      riskAmountPerTrade: null, allocation: null, dailyLossLimitPct: null,
-      maxTradesPerDay: null, source: "none"
+      worstCaseDailyLoss: null, maxCapitalAtRisk: null, maxCapitalAtRiskPct: null,
+      positionCap: null, riskAmountPerTrade: null, allocation: null,
+      dailyLossLimitPct: null, maxTradesPerDay: null, riskFraction: null,
+      riskFractionProposed: null, riskFractionNote: "", source: "none"
     }
   }
   return {
     worstCaseDailyLoss: config.dailyLossLimitAmount,
     maxCapitalAtRisk: null,
+    maxCapitalAtRiskPct: null,
     positionCap: config.maxConcurrentPositions,
     riskAmountPerTrade: config.riskAmountPerTrade,
     allocation: config.allocation,
     dailyLossLimitPct: config.dailyLossLimitPct,
     maxTradesPerDay: config.maxTradesPerDay,
+    riskFraction: config.riskFractionBase,
+    riskFractionProposed: null,
+    riskFractionNote: "",
     source: "config"
   }
 }
 
-export function normalizePlan(payload: unknown, config: ConfigInfo | null): Plan | null {
-  const sources = containers(payload, "plan", "mandate", "selection")
-  const strategyId = str(pick(sources, "strategy_id", "strategy"))
-  const status = readStatus(pick(sources, "status", "state", "approval_status"))
-  const tradingDate = str(pick(sources, "trading_date", "date"))
-  // A backend with nothing published yet answers with an empty object rather than a
-  // 404. Nothing to show is not the same as a broken plan.
-  if (!strategyId && !tradingDate && status === "unknown") return null
+/** Reads the approval record. `approval: null` on a published plan means nobody has
+ *  decided yet, which is pending - the state the gate exists for. A rejection is
+ *  recorded exactly like an approval, because "nobody approved" and "a human said
+ *  no" are different mornings. */
+function readApproval(sources: (Json | null)[]): { status: PlanStatus; at: string; note: string } {
+  const record = asRecord(pick(sources, "approval", "decision"))
+  if (record) {
+    let status = readStatus(pick([record], "status", "state"))
+    const approved = pick([record], "approved", "accepted")
+    if (status === "unknown" && approved !== undefined) status = bool(approved) ? "approved" : "rejected"
+    return {
+      status,
+      at: str(pick([record], "at", "approved_at", "decided_at", "timestamp")),
+      note: str(pick([record], "note", "reason"))
+    }
+  }
+  const explicit = readStatus(pick(sources, "status", "approval_status"))
+  return {
+    status: explicit === "unknown" ? "pending" : explicit,
+    at: str(pick(sources, "approved_at", "decided_at")),
+    note: str(pick(sources, "note", "operator_note"))
+  }
+}
 
-  const regimeRecord = asRecord(pick(sources, "regime"))
-  const regimeSources = regimeRecord ? [regimeRecord, ...sources] : sources
+export function normalizePlan(payload: unknown, config: ConfigInfo | null): Plan | null {
+  const root = asRecord(payload)
+  // exists=false is the answer before the Planner has run. Absent is not an error:
+  // no plan means no session, which PLAN.md Part 11 calls a safe failure.
+  if (root && root.exists === false) return null
+
+  // The planner's full artifact rides along under `raw` so the mandate card can show
+  // the evidence without a second round trip. The typed summary at the root wins
+  // wherever both carry a field, since that is the one the backend recomputed.
+  const raw = asRecord(root?.raw)
+  const selection = asRecord(raw?.selection)
+  const computed = asRecord(pick([root, raw], "consequences", "computed", "impact"))
+  const named = asRecord(root?.plan) ?? asRecord(root?.mandate)
+  const sources: (Json | null)[] = [named, root, selection, raw, computed, asRecord(root?.data)]
+
+  const strategyId = str(pick(sources, "strategy_id", "strategy"))
+  const tradingDate = str(pick(sources, "trading_date", "date"))
+  if (!strategyId && !tradingDate) return null
+
+  // regime is a plain label at the root and a full read under raw. Kept as its own
+  // search list so an unrelated key on the regime object cannot answer for the plan.
+  const regimeRecord = asRecord(pick([raw, root], "regime"))
+  const regimeSources: (Json | null)[] = regimeRecord ? [regimeRecord, ...sources] : sources
+  const approval = readApproval(sources)
 
   return {
     tradingDate,
     mandateVersion: str(pick(sources, "mandate_version", "version")),
     strategyId: strategyId || NO_TRADE_STRATEGY,
     tradeToday: bool(pick(sources, "trade_today", "will_trade"), strategyId !== NO_TRADE_STRATEGY && !!strategyId),
-    regime: str(pick(regimeSources, "label", "regime")),
+    regime: str(pick(regimeSources, "label")) || str(pick([root], "regime")),
     regimeDetail: str(pick(regimeSources, "detail", "regime_detail")),
     reason: str(pick(sources, "reason", "selection_reason")),
     rationale: str(pick(sources, "rationale", "narrative", "journal")),
@@ -472,14 +541,14 @@ export function normalizePlan(payload: unknown, config: ConfigInfo | null): Plan
     candidates: strings(pick(sources, "candidates")),
     viable: strings(pick(sources, "viable")),
     basket: readBasket(pick(sources, "basket", "watchlist", "universe")),
-    metrics: readMetrics(pick(sources, "metrics", "metrics_table", "comparison")),
-    consequences: readConsequences(sources, config),
+    metrics: readMetrics(pick(sources, "metrics", "comparison")),
+    consequences: readConsequences(computed, sources, config),
     startTime: str(pick(sources, "start_time")),
     endTime: str(pick(sources, "end_time")),
     squareoffTime: str(pick(sources, "squareoff_time")),
-    status,
-    approvedAt: str(pick(sources, "approved_at", "decided_at")),
-    note: str(pick(sources, "note", "operator_note")),
+    status: approval.status,
+    approvedAt: approval.at,
+    note: approval.note,
     publishedAt: str(pick(sources, "published_at", "created_at", "generated_at"))
   }
 }
@@ -506,22 +575,19 @@ export interface DecisionResult {
  *  left believing a mandate is live when the POST did not land. */
 export async function decidePlan(
   approved: boolean,
-  options: { mandateVersion?: string; note?: string } = {}
+  options: { note?: string } = {}
 ): Promise<DecisionResult> {
   const payload = await request<unknown>("/api/plan/approve", {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify({
-      approved,
-      mandate_version: options.mandateVersion || undefined,
-      note: options.note || undefined
-    })
+    body: JSON.stringify({ approved, note: options.note || null })
   })
   const sources = containers(payload, "plan")
+  const decision = readApproval(sources)
   return {
     ok: bool(pick(sources, "ok"), true),
-    status: readStatus(pick(sources, "status", "state")),
-    message: str(pick(sources, "message", "detail"))
+    status: decision.status,
+    message: str(pick(sources, "message", "detail", "note"))
   }
 }
 
@@ -543,7 +609,9 @@ export interface PositionRow {
   stopPrice: number | null
   lastPrice: number | null
   unrealized: number | null
-  rMultiple: number | null
+  /** Loss still on the table if the stop fills from here. This, not the current
+   *  unrealized, is what the budget check reserves against before a new entry. */
+  worstCaseRemaining: number | null
   riskAmount: number | null
   state: MachineState
   entryTime: string
@@ -605,7 +673,7 @@ function readPositions(value: unknown): PositionRow[] {
       stopPrice: num(pick([record], "stop_price", "stop", "trigger_price")),
       lastPrice: num(pick([record], "last_price", "ltp", "mark", "mark_price")),
       unrealized: num(pick([record], "unrealized", "unrealized_pnl", "pnl", "mtm")),
-      rMultiple: num(pick([record], "r_multiple", "r")),
+      worstCaseRemaining: num(pick([record], "worst_case_remaining", "risk_remaining")),
       riskAmount: num(pick([record], "risk_amount")),
       state: str(pick([record], "state", "machine_state"), "OPEN").toUpperCase(),
       entryTime: str(pick([record], "entry_time", "entry_ts", "fill_ts"))

@@ -40,6 +40,7 @@ import json
 import logging
 import sqlite3
 import threading
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from enum import Enum
@@ -200,10 +201,21 @@ class IntentLog:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
+        """Always wrap this in contextlib.closing.
+
+        `with sqlite3.connect(...) as conn` is a TRANSACTION context manager, not
+        a closer - it commits or rolls back and leaves the handle open. Under
+        CPython the handle is then released by refcounting, which is why this
+        does not visibly leak today, but relying on refcounting for resource
+        cleanup is wrong and stops being true the moment a connection is captured
+        by a traceback, a closure, or a different interpreter.
+
+        Flagged during the step 10 API build.
+        """
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         return conn
@@ -223,7 +235,7 @@ class IntentLog:
 
         cols = ", ".join(row)
         marks = ", ".join(f":{c}" for c in row)
-        with self._lock, self._connect() as conn:
+        with self._lock, closing(self._connect()) as conn:
             conn.execute(f"INSERT OR REPLACE INTO intents ({cols}) VALUES ({marks})", row)
             conn.commit()
 
@@ -236,14 +248,14 @@ class IntentLog:
     # ----------------------------------------------------------------- reading
 
     def get(self, intent_id: str) -> Intent | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM intents WHERE intent_id = ?", (intent_id,)
             ).fetchone()
         return _from_row(row) if row else None
 
     def for_date(self, trading_date: date) -> list[Intent]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM intents WHERE trading_date = ? ORDER BY signal_bar_ts",
                 (trading_date.isoformat(),),
@@ -258,7 +270,7 @@ class IntentLog:
         """
         live = [s.value for s in IntentState if not s.is_terminal and s is not IntentState.SIGNAL]
         marks = ",".join("?" * len(live))
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 f"SELECT * FROM intents WHERE trading_date = ? AND state IN ({marks})",
                 (trading_date.isoformat(), *live),
@@ -268,7 +280,7 @@ class IntentLog:
     def open_positions(self, trading_date: date) -> list[Intent]:
         held = [s.value for s in IntentState if s.holds_position]
         marks = ",".join("?" * len(held))
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 f"SELECT * FROM intents WHERE trading_date = ? AND state IN ({marks})",
                 (trading_date.isoformat(), *held),
@@ -276,7 +288,7 @@ class IntentLog:
         return [_from_row(r) for r in rows]
 
     def closed(self, trading_date: date) -> list[Intent]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT * FROM intents WHERE trading_date = ? AND state = ? ORDER BY exit_ts",
                 (trading_date.isoformat(), IntentState.CLOSED.value),
@@ -284,7 +296,7 @@ class IntentLog:
         return [_from_row(r) for r in rows]
 
     def realized_pnl(self, trading_date: date) -> float:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT COALESCE(SUM(net_pnl), 0) AS total FROM intents "
                 "WHERE trading_date = ? AND state = ?",
@@ -293,7 +305,7 @@ class IntentLog:
         return float(row["total"] or 0.0)
 
     def counts_by_state(self, trading_date: date) -> dict[str, int]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             rows = conn.execute(
                 "SELECT state, COUNT(*) AS n FROM intents WHERE trading_date = ? GROUP BY state",
                 (trading_date.isoformat(),),
