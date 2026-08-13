@@ -54,6 +54,8 @@ class Reconciliation:
     ambiguous: list[str] = field(default_factory=list)
     orphan_positions: list[str] = field(default_factory=list)
     missing_positions: list[str] = field(default_factory=list)
+    # Intents whose exit has completed at the broker, for the caller to settle.
+    exited: list[str] = field(default_factory=list)
     reason: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -63,6 +65,7 @@ class Reconciliation:
             "ambiguous": self.ambiguous,
             "orphan_positions": self.orphan_positions,
             "missing_positions": self.missing_positions,
+            "exited": self.exited,
             "reason": self.reason,
         }
 
@@ -76,6 +79,20 @@ def _to_int(value: Any) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _naive(value: datetime | None) -> datetime | None:
+    """Drop tzinfo so two datetimes can be compared.
+
+    Frames carry a tz-aware index (Asia/Kolkata) while broker order timestamps
+    parse naive, and subtracting the two raises TypeError. Found by the step 11
+    dry run, and it would have fired on the first live reconciliation of a
+    pending order. Both sides are the same local wall time, so dropping tzinfo
+    is correct here rather than merely convenient.
+    """
+    if value is None:
+        return None
+    return value.replace(tzinfo=None) if value.tzinfo is not None else value
 
 
 def _order_time(row: Mapping[str, Any]) -> datetime | None:
@@ -110,7 +127,7 @@ def candidates_for(
     """
     want_sym, want_side = _norm(intent.symbol), _norm(intent.side)
     want_qty = int(intent.planned_qty)
-    sent_at = intent.signal_bar_ts
+    sent_at = _naive(intent.signal_bar_ts)
 
     out: list[Mapping[str, Any]] = []
     for row in orders:
@@ -126,8 +143,8 @@ def candidates_for(
         tag = row.get("strategy")
         if tag is not None and _norm(tag) != _norm(strategy_tag):
             continue
-        placed = _order_time(row)
-        if placed is not None and abs(placed - sent_at) > MATCH_WINDOW:
+        placed = _naive(_order_time(row))
+        if placed is not None and sent_at is not None and abs(placed - sent_at) > MATCH_WINDOW:
             continue
         out.append(row)
     return out
@@ -234,8 +251,20 @@ def reconcile(
     # the broker had squared off and never notice. Caught by test_reconcile.
     held_now = log_store.open_positions(trading_date)
     for intent in held_now:
-        if _norm(intent.symbol) not in broker_positions:
-            result.missing_positions.append(intent.intent_id)
+        if _norm(intent.symbol) in broker_positions:
+            continue
+        if intent.state is IntentState.PENDING_EXIT:
+            # An exit was sent and the broker is now flat in this symbol. That
+            # is the exit HAVING WORKED, not a discrepancy.
+            #
+            # MEASURED, step 11: without this case the dry run halted the
+            # session every time a position closed normally - the agent read
+            # its own successful exit as "I believe I hold something the broker
+            # does not show". PENDING_EXIT is the one holds_position state
+            # where a flat broker is the EXPECTED outcome.
+            result.exited.append(intent.intent_id)
+            continue
+        result.missing_positions.append(intent.intent_id)
 
     # A position the agent has no intent for at all. On a shared account this is
     # usually the human's own trade, which is exactly why it cannot be ignored:

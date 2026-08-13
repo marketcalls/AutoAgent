@@ -48,11 +48,18 @@ from .intents import Intent, IntentLog, IntentState, make_intent_id
 
 log = logging.getLogger(__name__)
 
-# Maximum dwell time per state. Every state needs one, or a broker that never
+# Maximum dwell per state. Every state needs one, or a broker that never
 # answers leaves the machine parked forever.
-PENDING_ENTRY_TIMEOUT = timedelta(seconds=30)
-PENDING_EXIT_TIMEOUT = timedelta(seconds=15)
-UNPROTECTED_TIMEOUT = timedelta(seconds=5)
+#
+# MEASURED, step 11: these were 30s / 15s / 5s, which is the right scale for a
+# wall clock and unreachable on a BAR clock. Dwell advances in 5-minute jumps,
+# so a 30-second limit was already exceeded on the very next bar and every
+# entry timed out before the broker could confirm it. Expressed in bars now,
+# with a floor so a fast poll loop still behaves.
+BAR = timedelta(minutes=5)
+PENDING_ENTRY_TIMEOUT = 2 * BAR
+PENDING_EXIT_TIMEOUT = 2 * BAR
+UNPROTECTED_TIMEOUT = BAR
 
 # How many times to retry placing the protective stop before giving up and
 # exiting the position at market.
@@ -103,8 +110,14 @@ class SymbolMachine:
         self.budget = budget
         self.symbol = symbol
         self.exchange = exchange
+        self._now: datetime = datetime.now()
         self.active: Intent | None = None
-        self._entered_state_at: datetime = datetime.now()
+        # Dwell is measured against the BAR clock the caller passes in, not the
+        # wall clock. Found by the step 11 dry run: driven over historical bars
+        # no wall-clock time passes, so every timeout was unreachable and a
+        # PENDING_ENTRY sat forever. The same hazard exists live whenever the
+        # process is slow, restarted, or replayed.
+        self._entered_state_at: datetime | None = None
         self._stop_attempts = 0
 
     # ------------------------------------------------------------------ state
@@ -116,16 +129,18 @@ class SymbolMachine:
     def adopt(self, intent: Intent) -> None:
         """Take ownership of an intent recovered by reconciliation."""
         self.active = intent
-        self._entered_state_at = datetime.now()
+        self._entered_state_at = None
         self._stop_attempts = 0
 
     def _move(self, state: IntentState, reason: str) -> None:
         assert self.active is not None
         self.store.transition(self.active, state, reason)
-        self._entered_state_at = datetime.now()
+        self._entered_state_at = self._now
 
     def _dwell(self) -> timedelta:
-        return datetime.now() - self._entered_state_at
+        if self._entered_state_at is None:
+            return timedelta(0)
+        return self._now - self._entered_state_at
 
     # --------------------------------------------------------------- the tick
 
@@ -145,6 +160,9 @@ class SymbolMachine:
         Exits before entries means a symbol can close and re-enter on the same
         bar without ever being double-counted against the position cap.
         """
+        self._now = bar_ts
+        if self._entered_state_at is None and self.active is not None:
+            self._entered_state_at = bar_ts
         now = bar_ts
         act = Action(symbol=self.symbol)
 

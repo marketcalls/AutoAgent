@@ -32,7 +32,6 @@ import {
   formatPercent,
   formatPrice,
   formatQuantity,
-  formatR,
   formatSignedCurrency,
   pnlClass
 } from "@/lib/format"
@@ -185,11 +184,20 @@ export function LiveBoard({ session, config, streamConnected }: LiveBoardProps) 
             <Activity className="size-3" />
             {streamConnected ? "live feed" : "feed dropped"}
           </Badge>
+          {session.executorAttached ? null : <Badge variant="warn">no executor attached</Badge>}
           <RunStateBadge state={session.runState} />
         </div>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-6">
+        {session.executorAttached ? null : (
+          <div className="rounded-md border border-warn-border bg-warn-soft px-4 py-3 text-sm text-warn">
+            <span className="font-medium">No executor is attached. </span>
+            The run state and the limits below are real, but the position book and the P&amp;L figures
+            are UNKNOWN rather than flat - nothing has handed over a live book to read them from.
+            {session.source ? <span className="tnum"> Source: {session.source}.</span> : null}
+          </div>
+        )}
         {session.haltReason ? (
           <div
             className={cn(
@@ -277,7 +285,7 @@ export function LiveBoard({ session, config, streamConnected }: LiveBoardProps) 
                     <TableHead className="text-right">Stop</TableHead>
                     <TableHead className="text-right">Last</TableHead>
                     <TableHead className="text-right">Unrealized</TableHead>
-                    <TableHead className="text-right">R</TableHead>
+                    <TableHead className="text-right">Risk left</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -299,8 +307,11 @@ export function LiveBoard({ session, config, streamConnected }: LiveBoardProps) 
                       <TableCell className={cn("tnum text-right", pnlClass(position.unrealized))}>
                         {formatSignedCurrency(position.unrealized, 0)}
                       </TableCell>
-                      <TableCell className={cn("tnum text-right", pnlClass(position.rMultiple))}>
-                        {formatR(position.rMultiple)}
+                      <TableCell
+                        className="tnum text-right text-muted-foreground"
+                        title="Loss still on the table if the stop fills from here. This is what the budget reserves against."
+                      >
+                        {formatCurrency(position.worstCaseRemaining, 0)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -309,7 +320,9 @@ export function LiveBoard({ session, config, streamConnected }: LiveBoardProps) 
             </div>
           ) : (
             <p className="rounded-lg border border-border bg-panel px-4 py-3 text-sm text-muted-foreground">
-              No open positions.
+              {session.executorAttached
+                ? "No open positions."
+                : "No position book has been reported. This is unknown, not flat."}
             </p>
           )}
         </div>

@@ -43,6 +43,14 @@ from .reconcile import reconcile
 
 log = logging.getLogger(__name__)
 
+# States that mean the broker knows something the agent does not yet.
+_UNCONFIRMED = (
+    IntentState.PENDING_ENTRY,
+    IntentState.PENDING_EXIT,
+    IntentState.UNKNOWN,
+    IntentState.PARTIAL,
+)
+
 
 @dataclass
 class TickReport:
@@ -160,6 +168,19 @@ class Executor:
             self.budget.halt(f"reconciliation failed: {result.reason}")
             return False, result.reason
 
+        # Settle exits the broker has already completed, before adopting, so a
+        # finished trade is closed rather than re-adopted as still open.
+        for intent_id in result.exited:
+            intent = self.store.get(intent_id)
+            if intent is None:
+                continue
+            machine = self.machines.get(intent.symbol)
+            if machine is not None and machine.active is not None:
+                machine.settle_exit(
+                    intent.planned_entry, intent.fill_qty or intent.planned_qty,
+                    costs=0.0, now=datetime.now(),
+                )
+
         # Hand any recovered position back to the machine that owns it, or it
         # would be managed by nobody.
         for intent in self.store.open_positions(self.trading_date):
@@ -245,6 +266,17 @@ class Executor:
                 # A machine reporting halt means it reached UNKNOWN. Nothing new
                 # opens until reconciliation resolves it.
                 allow_entries = False
+
+        # Reconcile AFTER the machines have acted, so an entry sent on this bar
+        # is confirmed on this bar. Found by the step 11 dry run: with
+        # reconciliation only at start(), a PENDING_ENTRY never advanced, the
+        # squareoff recognised no position, and the session ended with the
+        # BROKER holding four positions the agent believed it did not have.
+        if any(m.state in _UNCONFIRMED for m in self.machines.values()):
+            ok, why = self.reconcile_now()
+            if not ok:
+                report.halted = True
+                report.reason = f"reconciliation failed mid-session: {why}"
 
         return self._finish(report, marks)
 

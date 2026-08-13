@@ -106,8 +106,13 @@ export function MandateCard({ plan, config, deciding, error, onDecide }: Mandate
                     Risk per trade
                   </div>
                   <div className="tnum mt-1 text-lg font-semibold">
-                    {formatFractionAsPercent(plan.riskFraction)}
+                    {formatFractionAsPercent(consequences.riskFraction ?? plan.riskFraction)}
                   </div>
+                  {consequences.riskFractionNote ? (
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {consequences.riskFractionNote}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -126,7 +131,11 @@ export function MandateCard({ plan, config, deciding, error, onDecide }: Mandate
               <StatTile
                 label="Max capital at risk"
                 value={formatCurrency(consequences.maxCapitalAtRisk, 0)}
-                detail="across all positions open at once"
+                detail={
+                  consequences.maxCapitalAtRiskPct !== null
+                    ? `${formatPercent(consequences.maxCapitalAtRiskPct, 3)} of allocation, all positions at once`
+                    : "across all positions open at once"
+                }
               />
               <StatTile
                 label="Position cap"
@@ -158,9 +167,18 @@ export function MandateCard({ plan, config, deciding, error, onDecide }: Mandate
                   choosing how to lose. Approving records the decision and the executor observes the
                   session without placing an order.
                 </p>
-                <p className="tnum text-sm font-medium">
-                  Capital at risk today: {formatCurrency(0, 0)}. Worst case loss: {formatCurrency(0, 0)}.
+                <p className="text-sm font-medium">
+                  Nothing is committed. The executor places no order, so no capital is at risk and
+                  the daily loss budget is untouched.
                 </p>
+                {consequences.worstCaseDailyLoss !== null ? (
+                  <p className="tnum text-xs text-muted-foreground">
+                    The mandate limits stay configured at{" "}
+                    {formatCurrency(consequences.worstCaseDailyLoss, 0)} for the day and{" "}
+                    {formatCurrency(consequences.riskAmountPerTrade, 0)} per trade. None of it will be
+                    used today.
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>

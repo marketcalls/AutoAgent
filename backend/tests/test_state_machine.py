@@ -163,9 +163,12 @@ def main() -> int:
     c = StubClient()
     m = SymbolMachine(s, c, store, budget, "RELIANCE")
     m.on_bar(T0, BAR, LONG, {}, risk_fraction=s.risk_fraction_base, allow_entries=True)
-    m._entered_state_at = datetime.now() - timedelta(seconds=60)   # force the timeout
     before = len([k for k in c.kinds() if k.startswith("place")])
-    act = m.on_bar(T0, BAR, LONG, {}, risk_fraction=s.risk_fraction_base, allow_entries=True)
+    # Dwell is measured on the BAR clock now, so the timeout is forced by
+    # advancing the bar rather than by rewinding the wall clock. PENDING_ENTRY
+    # allows 2 bars; this is 3 bars later.
+    act = m.on_bar(T0 + timedelta(minutes=15), BAR, LONG, {},
+                   risk_fraction=s.risk_fraction_base, allow_entries=True)
     after = len([k for k in c.kinds() if k.startswith("place")])
     check("a pending-entry timeout goes to UNKNOWN", m.state is IntentState.UNKNOWN, act.detail)
     check(

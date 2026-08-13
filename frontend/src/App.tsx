@@ -177,7 +177,7 @@ export default function App() {
       setDeciding(true)
       setDecideError("")
       try {
-        await decidePlan(approved, { mandateVersion: plan?.mandateVersion, note })
+        await decidePlan(approved, { note })
         await refresh({ includeSession: true })
       } catch (error) {
         setDecideError(
@@ -187,7 +187,7 @@ export default function App() {
         setDeciding(false)
       }
     },
-    [plan?.mandateVersion, refresh]
+    [refresh]
   )
 
   const onHalt = useCallback(async () => {
@@ -234,6 +234,13 @@ export default function App() {
   const hasSession = session !== null
   const showReview = trades.length > 0 || (hasSession && !live)
 
+  // /api/health reports the credential gaps; /api/config reports what validate()
+  // found wrong with the settings and whether the kill switch file exists. Both are
+  // reasons a session will not start, so they are shown together.
+  const killSwitch = (health?.killSwitch ?? false) || (config?.killSwitch ?? false)
+  const missingKeys = health?.missingKeys.length ? health.missingKeys : (config?.missingKeys ?? [])
+  const configErrors = config?.errors.length ? config.errors : (health?.errors ?? [])
+
   if (!ready) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -260,7 +267,7 @@ export default function App() {
             ) : (
               <Badge variant="outline">mode unknown</Badge>
             )}
-            {health?.killSwitch ? <Badge variant="danger">kill switch engaged</Badge> : null}
+            {killSwitch ? <Badge variant="danger">kill switch engaged</Badge> : null}
             {health && !health.tradingEnabled ? <Badge variant="muted">trading disabled</Badge> : null}
             {health?.version ? (
               <span className="tnum text-xs text-muted-foreground">v{health.version}</span>
@@ -280,15 +287,15 @@ export default function App() {
           onRetry={() => void refresh({ includeSession: true })}
         />
 
-        {health && (health.missingKeys.length > 0 || health.errors.length > 0) ? (
+        {missingKeys.length > 0 || configErrors.length > 0 ? (
           <div className="flex flex-col gap-1 rounded-lg border border-warn-border bg-warn-soft px-4 py-3 text-sm text-warn">
-            {health.missingKeys.length ? (
+            {missingKeys.length ? (
               <div className="flex items-start gap-2">
                 <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-                <span>Missing credentials: {health.missingKeys.join(", ")}.</span>
+                <span>Missing credentials: {missingKeys.join(", ")}.</span>
               </div>
             ) : null}
-            {health.errors.map((problem) => (
+            {configErrors.map((problem) => (
               <div key={problem} className="flex items-start gap-2">
                 <CircleAlert className="mt-0.5 size-4 shrink-0" />
                 <span>{problem}</span>

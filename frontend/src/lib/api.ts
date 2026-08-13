@@ -633,6 +633,12 @@ export interface BreakerRow {
 export interface SessionState {
   tradingDate: string
   runState: RunState
+  /** False when no executor has handed its budget over. Positions and MTM then read
+   *  as empty because they are UNKNOWN, not because the book is flat - a distinction
+   *  the board has to make out loud. */
+  executorAttached: boolean
+  /** "executor" | "control-surface". Where the numbers came from. */
+  source: string
   haltReason: string
   pausedUntil: string
   strategyId: string
@@ -718,6 +724,25 @@ function readSymbols(value: unknown): SymbolRow[] {
   return rows
 }
 
+/** Names for the flags on the breaker object, and their polarity.
+ *
+ * `trading_enabled` is the one that must not be read like the others: it is TRUE for
+ * the safe state, so rendering it with the same rule as `halted` would show a
+ * disabled agent as healthy. Anything not listed here is shown by its own name with
+ * tripped = the flag's own value. */
+const BREAKER_LABELS: Record<string, string> = {
+  kill_switch: "Kill switch",
+  halted: "Halted",
+  reduce_only: "Reduce only",
+  paused: "Paused",
+  budget_exhausted: "Budget exhausted",
+  position_cap_reached: "Position cap reached",
+  trade_cap_reached: "Trade cap reached",
+  trading_enabled: "Trading disabled"
+}
+
+const BREAKER_INVERTED = new Set(["trading_enabled"])
+
 function readBreakers(value: unknown): BreakerRow[] {
   const rows: BreakerRow[] = []
   for (const entry of asArray(value)) {
@@ -729,6 +754,19 @@ function readBreakers(value: unknown): BreakerRow[] {
       name,
       tripped: bool(pick([record], "tripped", "fired", "active")),
       detail: str(pick([record], "detail", "reason", "message"))
+    })
+  }
+  if (rows.length) return rows
+
+  // The backend sends one object of flags rather than a list.
+  const record = asRecord(value)
+  if (!record) return rows
+  for (const [key, flag] of Object.entries(record)) {
+    if (typeof flag !== "boolean") continue
+    rows.push({
+      name: BREAKER_LABELS[key] ?? key,
+      tripped: BREAKER_INVERTED.has(key) ? !flag : flag,
+      detail: ""
     })
   }
   return rows
@@ -745,9 +783,13 @@ function readRunState(value: unknown): RunState {
 }
 
 export function normalizeSession(payload: unknown): SessionState | null {
-  const sources = containers(payload, "session", "state", "live")
+  const sources = containers(payload, "session", "live")
   const budget = asRecord(pick(sources, "budget"))
   const budgetSources = budget ? [budget, ...sources] : sources
+  // The breaker object carries the two loss-streak thresholds, which appear nowhere
+  // else in the payload.
+  const breakerRecord = asRecord(pick(sources, "breakers"))
+  const thresholdSources = breakerRecord ? [breakerRecord, ...sources] : sources
   const runState = readRunState(pick(sources, "run_state", "state", "status"))
   const tradingDate = str(pick(sources, "trading_date", "date"))
   const positions = readPositions(pick(sources, "positions", "open_positions"))
@@ -762,8 +804,10 @@ export function normalizeSession(payload: unknown): SessionState | null {
   return {
     tradingDate,
     runState,
-    haltReason: str(pick(sources, "halt_reason", "reason")),
-    pausedUntil: str(pick(sources, "paused_until")),
+    executorAttached: bool(pick(sources, "executor_attached")),
+    source: str(pick(sources, "source")),
+    haltReason: str(pick(thresholdSources, "halt_reason", "reason")),
+    pausedUntil: str(pick(thresholdSources, "paused_until")),
     strategyId: str(pick(sources, "strategy_id", "strategy")),
     tradeToday: bool(pick(sources, "trade_today"), true),
     mandateVersion: str(pick(sources, "mandate_version")),
@@ -779,7 +823,7 @@ export function normalizeSession(payload: unknown): SessionState | null {
     tradeCount: num(pick(sources, "trade_count", "trades_today")),
     maxTradesPerDay: num(pick(sources, "max_trades_per_day", "trade_cap")),
     consecutiveLosses: num(pick(sources, "consecutive_losses", "loss_streak")),
-    consecutiveLossHalt: num(pick(sources, "consecutive_loss_halt")),
+    consecutiveLossHalt: num(pick(thresholdSources, "consecutive_loss_halt", "consecutive_loss_halt_at")),
     maxConcurrentPositions: num(pick(sources, "max_concurrent_positions", "position_cap")),
     positions,
     symbols,
@@ -854,11 +898,13 @@ function readTrades(value: unknown): TradeRow[] {
       symbol,
       side: str(pick([record], "side", "action", "direction")).toUpperCase(),
       strategyId: str(pick([record], "strategy_id", "strategy")),
-      entryTime: str(pick([record], "entry_time", "entry_ts")),
-      entryPrice: num(pick([record], "entry_price", "fill_price")),
-      quantity: num(pick([record], "quantity", "qty", "fill_qty")),
-      stopPrice: num(pick([record], "stop_price", "stop")),
-      exitTime: str(pick([record], "exit_time", "exit_ts")),
+      // The intent record names the filled leg fill_*, and keeps the planned figures
+      // beside it. The fill is what happened, so it is read first.
+      entryTime: str(pick([record], "fill_ts", "entry_time", "entry_ts", "signal_bar_ts")),
+      entryPrice: num(pick([record], "fill_price", "entry_price", "planned_entry")),
+      quantity: num(pick([record], "fill_qty", "quantity", "qty", "planned_qty")),
+      stopPrice: num(pick([record], "stop_price", "planned_stop", "stop")),
+      exitTime: str(pick([record], "exit_ts", "exit_time")),
       exitPrice: num(pick([record], "exit_price")),
       exitReason: str(pick([record], "exit_reason", "reason")),
       grossPnl: num(pick([record], "gross_pnl")),
@@ -938,7 +984,10 @@ async function control(path: string, reason: string): Promise<ActionResult> {
   return {
     ok: bool(pick(sources, "ok"), true),
     state: readRunState(pick(sources, "run_state", "state", "status")),
-    message: str(pick(sources, "message", "detail", "reason"))
+    // `note` is where the backend says what the request did NOT do - this process
+    // sets and persists the state, the executor owns the broker connection - so it
+    // is read ahead of any generic message.
+    message: str(pick(sources, "note", "message", "detail", "reason"))
   }
 }
 
