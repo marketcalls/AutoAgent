@@ -31,7 +31,33 @@ function windowLabel(window: string): string {
   return window || EMPTY
 }
 
-function MetricsTable({ rows, selected }: { rows: MetricRow[]; selected: string }) {
+/** Whether the selector counted this strategy as viable, or null when it cannot be
+ *  said from the payload.
+ *
+ *  The metrics rows carry `is_viable` as a Python property, and asdict() drops
+ *  properties, so the field is usually absent. The selector's own answer survives
+ *  though - it publishes the list of strategies that cleared the gate - and that list
+ *  is the server's verdict rather than a rule reimplemented here. It applies to the
+ *  LONG window only, because that is the window the viability gate reads; marking a
+ *  short-window row from it would be attributing a verdict to the wrong sample. */
+function viabilityOf(row: MetricRow, viable: string[], candidates: string[]): boolean | null {
+  if (row.viable !== null) return row.viable
+  if (row.window.trim().toLowerCase() !== "long") return null
+  if (!candidates.includes(row.strategyId)) return null
+  return viable.includes(row.strategyId)
+}
+
+function MetricsTable({
+  rows,
+  selected,
+  viable,
+  candidates
+}: {
+  rows: MetricRow[]
+  selected: string
+  viable: string[]
+  candidates: string[]
+}) {
   return (
     <Table>
       <TableHeader>
@@ -51,6 +77,7 @@ function MetricsTable({ rows, selected }: { rows: MetricRow[]; selected: string 
       <TableBody>
         {rows.map((row) => {
           const isSelected = row.strategyId === selected
+          const isViable = viabilityOf(row, viable, candidates)
           return (
             <TableRow key={`${row.strategyId}:${row.window}`} className={isSelected ? "bg-primary-soft" : undefined}>
               <TableCell className="font-mono text-xs">{row.strategyId}</TableCell>
@@ -72,10 +99,10 @@ function MetricsTable({ rows, selected }: { rows: MetricRow[]; selected: string 
               <TableCell className="tnum text-right">{formatPercent(row.maxDrawdownPct, 1)}</TableCell>
               <TableCell className="tnum text-right">{formatNumber(row.sharpe, 2)}</TableCell>
               <TableCell>
-                {row.viable === null ? (
+                {isViable === null ? (
                   <span className="text-xs text-muted-foreground">{EMPTY}</span>
                 ) : (
-                  <Badge variant={row.viable ? "success" : "muted"}>{row.viable ? "yes" : "no"}</Badge>
+                  <Badge variant={isViable ? "success" : "muted"}>{isViable ? "yes" : "no"}</Badge>
                 )}
               </TableCell>
             </TableRow>
@@ -145,7 +172,12 @@ export function PlanSummary({ plan }: { plan: Plan }) {
         </div>
         {plan.metrics.length ? (
           <div className="rounded-lg border border-border">
-            <MetricsTable rows={plan.metrics} selected={plan.strategyId} />
+            <MetricsTable
+              rows={plan.metrics}
+              selected={plan.strategyId}
+              viable={plan.viable}
+              candidates={plan.candidates}
+            />
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">

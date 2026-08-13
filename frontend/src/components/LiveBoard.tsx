@@ -130,6 +130,8 @@ export function LiveBoard({ session, config, streamConnected }: LiveBoardProps) 
         note: ""
       }))
 
+  const trippedBreakers = session.breakers.filter((breaker) => breaker.tripped)
+
   const limitRows: LimitRow[] = [
     {
       label: "Daily loss budget",
@@ -354,14 +356,20 @@ export function LiveBoard({ session, config, streamConnected }: LiveBoardProps) 
             Limits and breakers
           </div>
           <LimitList rows={limitRows} />
+          {/* Only the tripped ones are named. A wall of untripped badges makes the one
+              that matters harder to find, and the numeric state is already above. */}
           {session.breakers.length ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {session.breakers.map((breaker) => (
-                <Badge key={breaker.name} variant={breaker.tripped ? "danger" : "muted"} title={breaker.detail}>
-                  {breaker.name}
-                  {breaker.tripped ? " tripped" : ""}
-                </Badge>
-              ))}
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Tripped:</span>
+              {trippedBreakers.length ? (
+                trippedBreakers.map((breaker) => (
+                  <Badge key={breaker.name} variant="danger" title={breaker.detail}>
+                    {breaker.name}
+                  </Badge>
+                ))
+              ) : (
+                <Badge variant="muted">nothing</Badge>
+              )}
             </div>
           ) : null}
         </div>
