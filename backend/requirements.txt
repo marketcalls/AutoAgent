@@ -1,0 +1,38 @@
+# AutoAgent runtime dependencies.
+#
+# These three are pinned EXACTLY. An upgrade to any of them can move the order
+# surface, the provider workarounds, or the indicator behaviour that the strategies
+# and the state machine are written against. Verified together at build step 0
+# against a live OpenAlgo instance.
+openalgo==2.0.3
+agno==2.8.7
+litellm==1.96.2
+
+# Everything below tracks current releases.
+fastapi
+uvicorn[standard]
+pandas
+numpy
+httpx
+python-dateutil
+tzdata
+
+# Security floors on transitive dependencies. Floored rather than pinned so patch
+# releases still flow.
+requests>=2.32.4
+urllib3>=2.5.0
+idna>=3.10
+certifi>=2025.1.31
+
+# NOT LISTED HERE, deliberately: vectorbt.
+#
+# It is a backtesting and pre-open dependency only. It is never imported by the
+# executor and never runs during a trading session, and at step 0 it would not
+# import at all in this environment:
+#
+#   ImportError: Numba needs NumPy 2.4 or less. Got NumPy 2.5
+#
+# Installing it here would force a numpy downgrade on the process that places
+# orders, to satisfy a library that process never uses. The backtest environment is
+# isolated instead; see backend/app/backtest/ENVIRONMENT.md for the working version
+# set and the exact commands to reproduce it.
