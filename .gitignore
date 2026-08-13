@@ -2,8 +2,10 @@
 .env
 .env.local
 
-# Runtime state: intent log, order audit, historical bars, kill switch
-data/
+# Runtime state: intent log, order audit, historical bars, kill switch.
+# Leading slash anchors this to the repo root. An unanchored "data/" also matches
+# backend/app/data/, which is source code, and silently drops it from every commit.
+/data/
 
 # Python
 __pycache__/
