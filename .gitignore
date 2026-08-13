@@ -12,6 +12,10 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+# Isolated backtest environment. vectorbt needs numba/llvmlite versions the
+# executor never imports; keeping it a separate venv makes "vectorbt never runs
+# in the executor" physical rather than a convention.
+.venv-backtest/
 .pytest_cache/
 .ipynb_checkpoints/
 

@@ -267,6 +267,7 @@ class Settings:
     # is fetched each morning.
     bars_dir: Path = PROJECT_ROOT / "data" / "bars"
     timezone: str = "Asia/Kolkata"
+    max_position_notional_pct: float = 100.0
 
     # Alerts. Push, not pull - nobody is watching a screen.
     telegram_username: str = ""
@@ -309,6 +310,7 @@ class Settings:
             market_filter_symbol=_env("MARKET_FILTER_SYMBOL", "NIFTY").upper(),
             market_filter_exchange=_env("MARKET_FILTER_EXCHANGE", "NSE_INDEX").upper(),
             max_order_pct_of_funds=_env_float("MAX_ORDER_PCT_OF_FUNDS", 90.0),
+            max_position_notional_pct=_env_float("MAX_POSITION_NOTIONAL_PCT", 100.0),
             max_order_value=_env_float("MAX_ORDER_VALUE", 0.0),
             max_order_quantity=_env_int("MAX_ORDER_QUANTITY", 0),
             max_orders_per_session=_env_int("MAX_ORDERS_PER_SESSION", 25),

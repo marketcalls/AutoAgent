@@ -65,10 +65,17 @@ def _resolved(params: Mapping[str, Any] | None) -> tuple[int, int, int, float]:
     return fast, slow, atr_period, atr_mult
 
 
+def _warmup(slow: int, atr_period: int) -> int:
+    # Both legs are recursive and seeded at bar 0, so both need the convergence
+    # multiple. One definition, used by warmup_bars() and by signals(), because a
+    # mask that disagrees with the declared warm-up is a parity failure waiting.
+    return max(EMA_WARMUP_MULTIPLE * slow, EMA_WARMUP_MULTIPLE * atr_period)
+
+
 def warmup_bars(params: Mapping[str, Any] | None = None) -> int:
     """Bars discarded before a signal is trusted."""
     _, slow, atr_period, _ = _resolved(params)
-    return max(EMA_WARMUP_MULTIPLE * slow, EMA_WARMUP_MULTIPLE * atr_period)
+    return _warmup(slow, atr_period)
 
 
 def signals(
@@ -86,7 +93,7 @@ def signals(
     """
     require_frame(frame)
     fast, slow, atr_period, atr_mult = _resolved(params)
-    warmup = max(EMA_WARMUP_MULTIPLE * slow, EMA_WARMUP_MULTIPLE * atr_period)
+    warmup = _warmup(slow, atr_period)
     if len(frame) <= warmup:
         return empty_signals(frame.index)
 

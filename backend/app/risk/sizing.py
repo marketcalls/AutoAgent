@@ -146,6 +146,36 @@ def quantity_for(
             f"{risk_amount:.2f}; one share would risk more than allowed",
         )
 
+    # NOTIONAL CAP. Risk-based sizing alone is unbounded as the stop tightens,
+    # and tight stops are the common case on 5m bars, not the exception.
+    #
+    # Measured at step 3 on real data: a 2-rupee stop on a 1,300-rupee stock
+    # gives 2,500 shares, which is 32.5 lakh of notional against a 10 lakh
+    # allocation - 3.25x the entire allocation in ONE position, and roughly 10x
+    # gross across three. MIS leverage does not stretch that far, so live those
+    # orders are simply rejected, while in a backtest they quietly multiply
+    # turnover and therefore costs. The first replay showed 6 lakh of costs on
+    # 44 sessions from exactly this.
+    #
+    # Risk controls the LOSS. This controls the SIZE. Both are needed.
+    cap_pct = getattr(settings, "max_position_notional_pct", 100.0)
+    if cap_pct and cap_pct > 0:
+        max_notional = settings.allocation * (cap_pct / 100.0)
+        if quantity * entry_price > max_notional:
+            quantity = int(math.floor(max_notional / entry_price))
+            if lot_size > 1:
+                quantity = (quantity // lot_size) * lot_size
+            if quantity <= 0:
+                return SizingResult(
+                    0, risk_amount, stop_distance, 0.0,
+                    f"one share at {entry_price:.2f} exceeds the per-position "
+                    f"notional cap of {max_notional:.0f}",
+                )
+            # The trade now risks LESS than the mandate allows, which is the safe
+            # direction. Report the truth so the budget is not told a larger
+            # number than the position can actually lose.
+            risk_amount = quantity * stop_distance
+
     # freeze_qty of 1 on a cash symbol reads as "not applicable" rather than a
     # real exchange freeze limit. Verified at step 0 on RELIANCE NSE.
     if freeze_qty and freeze_qty > 1 and quantity > freeze_qty:

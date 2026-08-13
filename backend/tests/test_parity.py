@@ -277,8 +277,11 @@ def run_parity(strategy: ModuleType, frame: pd.DataFrame, label: str,
         left_stop, right_stop, rtol=STOP_RTOL, atol=STOP_ATOL, equal_nan=True
     )
     both_finite = np.isfinite(left_stop) & np.isfinite(right_stop)
-    worst = float(np.max(np.abs(left_stop[both_finite] - right_stop[both_finite]))) \
-        if both_finite.any() else 0.0
+    worst = (
+        float(np.max(np.abs(left_stop[both_finite] - right_stop[both_finite])))
+        if both_finite.any()
+        else 0.0
+    )
     if not bool(close.all()):
         i = int(np.flatnonzero(~close)[0])
         cause = diagnose(
@@ -313,8 +316,9 @@ def run_signal_sanity(strategy: ModuleType, frame: pd.DataFrame, label: str) -> 
     warmup = int(strategy.warmup_bars())
     close = frame["close"].to_numpy(dtype=float)
 
-    entries = int(signals["long_entry"].sum())
-    exits = int(signals["long_exit"].sum())
+    long_entry = signals["long_entry"].to_numpy(bool)
+    long_exit = signals["long_exit"].to_numpy(bool)
+    entries, exits = int(long_entry.sum()), int(long_exit.sum())
     check(
         f"{name} [{label}] produces long signals", entries > 0 and exits > 0,
         f"{entries} entries, {exits} exits over {len(frame)} bars",
@@ -323,11 +327,8 @@ def run_signal_sanity(strategy: ModuleType, frame: pd.DataFrame, label: str) -> 
     # exrem must have collapsed each run to one signal, so entries and exits
     # strictly alternate. Two entries with no exit between them means a position
     # would be doubled.
-    marks = []
-    for i in np.flatnonzero(
-        signals["long_entry"].to_numpy(bool) | signals["long_exit"].to_numpy(bool)
-    ):
-        marks.append("E" if signals["long_entry"].to_numpy(bool)[i] else "X")
+    marks = ["E" if long_entry[i] else "X"
+             for i in np.flatnonzero(long_entry | long_exit)]
     alternates = all(a != b for a, b in zip(marks, marks[1:]))
     check(f"{name} [{label}] entries and exits alternate", alternates,
           "".join(marks[:12]) + ("..." if len(marks) > 12 else ""))
@@ -342,7 +343,7 @@ def run_signal_sanity(strategy: ModuleType, frame: pd.DataFrame, label: str) -> 
         bool(signals.iloc[:warmup]["stop_price"].isna().all()),
     )
 
-    long_bars = signals["long_entry"].to_numpy(bool)
+    long_bars = long_entry
     stop = signals["stop_price"].to_numpy(float)
     check(
         f"{name} [{label}] long stop sits below the close on every entry bar",
@@ -375,9 +376,7 @@ def run_lookahead_probe(strategy: ModuleType, frame: pd.DataFrame, label: str) -
     name = str(strategy.STRATEGY_ID)
     vector = BacktestAdapter(strategy).run(frame)
     warmup = int(strategy.warmup_bars())
-    probes = [
-        i for i in np.linspace(warmup + 1, len(frame) - 1, 12).astype(int).tolist()
-    ]
+    probes = np.linspace(warmup + 1, len(frame) - 1, 12).astype(int).tolist()
     worst_stop = 0.0
     bad: list[int] = []
     for i in probes:
@@ -526,12 +525,11 @@ def test_adapters() -> None:
           buffer is not None and len(buffer) == trimmed.tail_bars,
           f"{0 if buffer is None else len(buffer)} rows held")
 
-    empty = ExecutionAdapter(strategy)
     try:
-        empty._evaluate()
+        ExecutionAdapter(strategy).on_frame(frame.iloc[:0])
         check("evaluating with no bars is refused", False, "no error")
-    except StrategyError:
-        check("evaluating with no bars is refused", True)
+    except StrategyError as exc:
+        check("evaluating with no bars is refused", True, str(exc)[:52])
 
 
 def test_parity_synthetic() -> None:

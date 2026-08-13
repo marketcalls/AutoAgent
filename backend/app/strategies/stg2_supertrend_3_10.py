@@ -64,10 +64,17 @@ def _resolved(params: Mapping[str, Any] | None) -> tuple[int, float]:
     return period, multiplier
 
 
+def _warmup(period: int) -> int:
+    # The supertrend bands are built on a Wilder ATR, seeded and recursive like
+    # an EMA, so the same convergence multiple applies. One definition, shared by
+    # warmup_bars() and signals().
+    return EMA_WARMUP_MULTIPLE * period
+
+
 def warmup_bars(params: Mapping[str, Any] | None = None) -> int:
     """Bars discarded before a signal is trusted."""
     period, _ = _resolved(params)
-    return EMA_WARMUP_MULTIPLE * period
+    return _warmup(period)
 
 
 def signals(
@@ -86,7 +93,7 @@ def signals(
     """
     require_frame(frame)
     period, multiplier = _resolved(params)
-    warmup = EMA_WARMUP_MULTIPLE * period
+    warmup = _warmup(period)
     if len(frame) <= warmup:
         return empty_signals(frame.index)
 
