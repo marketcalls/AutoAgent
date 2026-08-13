@@ -158,6 +158,17 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat(timespec="seconds") if value is not None else None
 
 
+def _money(value: float, places: int = 2) -> float:
+    """Round for display and collapse negative zero.
+
+    budget_used_pct computes 100 * -min(0.0, mtm) / limit, which is -0.0 when
+    nothing has been lost yet. JSON preserves the sign, so an untouched budget
+    renders as "-0.00% consumed" on the live view. Adding 0.0 makes it +0.0 under
+    IEEE 754 without touching any other value.
+    """
+    return round(value, places) + 0.0
+
+
 # --- broker reads, off the event loop ---------------------------------------
 
 _broker_cache: dict[str, Any] = {"at": 0.0, "value": None}
@@ -368,8 +379,8 @@ async def _session_snapshot() -> SessionResponse:
             entry_price=p.entry_price,
             stop_price=p.stop_price,
             last_price=last,
-            unrealized=round(p.unrealized(last or 0.0), 2),
-            worst_case_remaining=round(p.worst_case_remaining(), 2),
+            unrealized=_money(p.unrealized(last or 0.0)),
+            worst_case_remaining=_money(p.worst_case_remaining()),
         ))
 
     unrealized = budget.unrealized_pnl(marks)
@@ -407,11 +418,11 @@ async def _session_snapshot() -> SessionResponse:
         positions=views,
         position_count=len(views),
         max_concurrent_positions=settings.max_concurrent_positions,
-        realized_pnl=round(budget.realized_pnl, 2),
-        unrealized_pnl=round(unrealized, 2),
-        mtm_pnl=round(mtm, 2),
-        budget_used_pct=round(budget.budget_used_pct(marks), 2),
-        remaining_budget=round(remaining, 2),
+        realized_pnl=_money(budget.realized_pnl),
+        unrealized_pnl=_money(unrealized),
+        mtm_pnl=_money(mtm),
+        budget_used_pct=_money(budget.budget_used_pct(marks)),
+        remaining_budget=_money(remaining),
         daily_loss_limit_amount=settings.daily_loss_limit_amount,
         allocation=settings.allocation,
         trade_count=budget.trade_count,
@@ -516,22 +527,41 @@ def _consequences(risk_fraction: Any) -> PlanConsequences:
 def _plan_response(day: date, raw: dict[str, Any] | None) -> PlanResponse:
     """Read tolerantly.
 
-    The planner writes this file and is a separate build step, so the fields are
-    accepted either nested under "selection" (Selection.as_dict()) or flat at the top
-    level, and the regime either as a label string or as a RegimeRead dump.
+    The planner is a separate build step and writes the same answer twice: the raw
+    Selection under "selection", and its RESOLVED view flattened at the top level.
+    The top level therefore wins - it is the one that carries the risk fraction after
+    scaling - and a null there means "not resolved", which defers to the nested value
+    rather than erasing it. Reading these the other way round shows the pre-scaling
+    number on the mandate card, which is the number a human would then approve.
+
+    Regime arrives either as a label string (Selection.regime) or as a RegimeRead
+    dump. The dump has no "label" key, because label is a property rather than a
+    field, so it is derived here the same way RegimeRead does it.
     """
     path = str(_plan_path(day))
     if raw is None:
         return PlanResponse(exists=False, trading_date=day.isoformat(), path=path)
 
     selection = raw.get("selection") if isinstance(raw.get("selection"), dict) else {}
-    merged: dict[str, Any] = {**raw, **selection}
+    merged: dict[str, Any] = dict(selection)
+    for key, value in raw.items():
+        if value is not None:
+            merged[key] = value
 
-    regime = merged.get("regime")
-    if isinstance(regime, dict):
-        regime_label = str(regime.get("label") or regime.get("direction") or "")
-    else:
-        regime_label = str(regime or "")
+    regime_label = ""
+    for candidate in (selection.get("regime"), raw.get("regime")):
+        if isinstance(candidate, str) and candidate:
+            regime_label = candidate
+            break
+        if isinstance(candidate, dict):
+            label = candidate.get("label")
+            if label:
+                regime_label = str(label)
+            elif candidate.get("trending"):
+                regime_label = f"trend_{candidate.get('direction') or 'none'}"
+            else:
+                regime_label = "chop"
+            break
 
     basket = merged.get("basket")
     if isinstance(basket, list):

@@ -116,17 +116,23 @@ class RiskBudget:
     paused_until: datetime | None = None
     open_positions: dict[str, Position] = field(default_factory=dict)
 
-    # Whether a halt is written to disk. TRUE for a live session, where a halt
-    # must survive a restart. FALSE for a backtest.
+    # TRUE for a real session, FALSE for a backtest. Governs two things that turn
+    # out to be the same question: whether a halt is written to disk, and whether
+    # the LIVE operational gates apply.
     #
-    # MEASURED BUG, step 8: the portfolio replay constructs one RiskBudget per
-    # simulated session using the real Settings, so every backtest session that
-    # hit three consecutive losses wrote a halt file into the LIVE data
-    # directory. 56 of them accumulated, and the live executor then refused to
-    # start with "restored halt from disk: 3 consecutive losses" - halted by a
-    # backtest it ran yesterday. A simulation must never be able to stop the
-    # real thing.
-    persist: bool = True
+    # MEASURED BUG 1, step 8: the replay builds one RiskBudget per simulated
+    # session from the real Settings, and halt() persists. Every simulated day
+    # that hit three consecutive losses wrote a halt file into the LIVE data
+    # directory. 56 accumulated and the real executor refused to start - halted
+    # by a backtest.
+    #
+    # MEASURED BUG 2, step 9: can_open() checks the kill switch and
+    # TRADING_ENABLED. Those are LIVE operational switches, not properties of the
+    # market being simulated, so with TRADING_ENABLED=false - the shipped default
+    # - every backtest returned ZERO trades and the planner produced an empty
+    # metrics table that read as "no strategy is viable". A simulation must not
+    # consult live operational state at all.
+    live: bool = True
 
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -168,11 +174,14 @@ class RiskBudget:
         """
         now = now or datetime.now()
 
-        if self.settings.kill_switch_engaged():
-            return Decision(False, "kill_switch", "the kill switch file is present")
-
-        if not self.settings.trading_enabled:
-            return Decision(False, "trading_disabled", "TRADING_ENABLED is false")
+        # Live operational switches. A simulation must not consult them: they say
+        # whether THIS PROCESS may trade right now, not whether the market would
+        # have allowed the trade.
+        if self.live:
+            if self.settings.kill_switch_engaged():
+                return Decision(False, "kill_switch", "the kill switch file is present")
+            if not self.settings.trading_enabled:
+                return Decision(False, "trading_disabled", "TRADING_ENABLED is false")
 
         self._expire_pause(now)
 
@@ -333,7 +342,7 @@ class RiskBudget:
         return Path(self.settings.db_path).parent / f"halt-{self.trading_date.isoformat()}.json"
 
     def _persist(self) -> None:
-        if not self.persist:
+        if not self.live:
             return
         try:
             self._halt_file().write_text(
@@ -360,7 +369,7 @@ class RiskBudget:
 
         Returns True if a halt was restored, meaning the session must not trade.
         """
-        if not self.persist:
+        if not self.live:
             return False
         path = self._halt_file()
         if not path.exists():
