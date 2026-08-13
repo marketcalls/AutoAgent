@@ -98,24 +98,74 @@ this project it is marked OPEN and carries a verification step in Part 9.
 - MIS orders are rejected by the sandbox after 15:15 IST. Discovered in TradingAgent
   progress doc 007.
 
-### OPEN - must be verified before the design that depends on it is built
+### RESOLVED at step 0
 
-1. **Client order ID passthrough.** Does OpenAlgo accept a client-supplied order
-   identifier that survives to the broker and back? The `strategy` field is the closest
-   known equivalent. This determines whether UNKNOWN-state resolution (Part 6) can be
-   automatic or must escalate to a halt. **Verify first. It changes the state machine.**
-2. **Order-update WebSocket reliability.** The feed exists (`ws://127.0.0.1:8765`,
-   `subscribe_orders`) and is unused in TradingAgent v1. Push-native for Zerodha. If
-   reliable it replaces polling for fill confirmation. If both a broker WS and an HTTPS
-   postback are configured, deduplicate on `orderid` + `order_status` +
-   `filled_quantity`.
-3. **Intraday history depth.** How many days of 5-minute bars will `history` return in
-   one call, and what is the practical rate limit for a 15-symbol, 90-session pull.
-4. **Sandbox fill realism.** Does analyzer mode model partial fills, rejects, and
-   slippage, or does it fill everything at the touch? This bounds how much a paper
-   record is worth as evidence.
-5. **Freeze quantity and circuit limits.** Per-symbol freeze quantities come from
-   `qtyfreeze.csv` and must never be hard-coded. Circuit-limit rejections need handling.
+Measured against the installed packages and a live OpenAlgo instance (broker zerodha,
+analyzer mode) on 2026-08-13 by `scripts/validate_setup.py`. 26 checks passed, 1 failed.
+
+1. **Client order ID passthrough - ANSWERED: there is none.**
+   `api.placeorder` accepts only `strategy, symbol, action, exchange, price_type,
+   product, quantity, **kwargs`. No `client_order_id`, `tag`, or `correlation_id`. All
+   `**kwargs` are `str()`-cast and forwarded, but the server validates its own schema.
+
+   **Consequence, and it shapes Part 6:** the reconciliation key is
+   `(strategy, symbol, side, quantity, time window)` matched against the orderbook.
+   UNKNOWN-state resolution therefore **cannot be fully automatic**. Where a match is
+   ambiguous the executor halts and escalates. The deterministic `intent_id` remains the
+   internal key; it simply cannot be pushed to the broker.
+
+   `strategy` is settable per order and is the only attribution tag that survives the
+   round trip. Orderbook rows expose `symbol`, `action` and `quantity`, so the composite
+   key is viable.
+
+2. **Order-update WebSocket - port reachable** at `ws://127.0.0.1:8765`. Reachability
+   only; `subscribe_orders` behaviour is verified at step 6. Until then the executor
+   polls the orderbook for fills. The dedupe rule stands if both a broker WS and an
+   HTTPS postback are configured: `orderid` + `order_status` + `filled_quantity`.
+
+3. **Intraday history depth - generous, one call covers the lookback.** Measured on
+   RELIANCE NSE 5m:
+
+   | Calendar days | Bars | Sessions |
+   |---|---|---|
+   | 10 | 648 | 9 |
+   | 30 | 1,698 | 23 |
+   | 90 | 4,698 | 63 |
+   | 180 | 9,048 | 121 |
+
+   Roughly 75 bars per session, matching the 375-minute equity session. The 90-session
+   long lookback fits in a single request, so the first fill of the bar store is cheap
+   and only the newest session needs fetching thereafter.
+
+4. **Sandbox fill realism - still open.** Requires `--with-orders`, which was not run in
+   this pass. Deferred to step 8, when the executor exists and can be exercised in the
+   sandbox end to end.
+
+5. **Freeze quantity and lot size - available per symbol.** `/symbol` returns
+   `lotsize`, `tick_size` and `freeze_qty`. For RELIANCE NSE cash: `lotsize=1`,
+   `tick_size=0.1`, `freeze_qty=1`. Read them, never hard-code them. Note `freeze_qty=1`
+   on a cash equity looks like "not applicable" rather than a real freeze limit; treat a
+   value of 1 on a cash symbol as absent and confirm before relying on it for sizing.
+
+### Also confirmed at step 0
+
+- `ta.supertrend(high, low, close, period=10, multiplier=3.0)` returns a **2-tuple**.
+- `ta.adx` returns a **3-tuple** and ADX is element **[2]**, not [0].
+- `ta.ema(close, 10.0)` raises `TypeError`. **`int()` coercion is mandatory** before
+  every `ta` call, and JSON decodes numbers to float.
+- `ta.ema`, `ta.sma`, `ta.atr` all produce finite series on a cleaned live frame.
+- Broker `availablecash` was 99,99,984 against an `ALLOCATION` of 10,00,000 - exactly
+  the situation that makes the Part 5 allocation rule load-bearing. Sizing against
+  broker funds would have produced positions ten times too large.
+
+### OPEN - still unresolved
+
+- **vectorbt is not currently importable.** `ImportError: Numba needs NumPy 2.4 or less.
+  Got NumPy 2.5.` Installed: numpy 2.5.2, pandas 3.0.5, vectorbt 1.0.0. This blocks
+  steps 3 and 4. vectorbt never runs during a session, so an isolated environment is an
+  acceptable resolution. Being resolved separately; the finding is recorded in
+  `backend/app/backtest/ENVIRONMENT.md`.
+- Sandbox fill realism, item 4 above, deferred to step 8.
 
 ### Version pins inherited
 
